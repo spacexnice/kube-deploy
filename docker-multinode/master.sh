@@ -44,4 +44,8 @@ fi
 
 kube::multinode::start_k8s_master
 
+kube::helpers::create_kubeconfig
+
 kube::log::status "Done. It may take about a minute before apiserver is up."
+
+kube::helpers::kube_usage

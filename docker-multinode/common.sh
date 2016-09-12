@@ -7,7 +7,9 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-#
+# curl -sSL https://storage.googleapis.com/kubernetes-release/release/v1.3.5/bin/linux/amd64/kubectl > /usr/local/bin/kubectl
+# chmod +x /usr/local/bin/kubectl
+
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,6 +19,16 @@
 source $(dirname "${BASH_SOURCE}")/cni-plugin.sh
 source $(dirname "${BASH_SOURCE}")/docker-bootstrap.sh
 
+kube::multinode::get_pause_pod(){
+    cnt=$(docker images |grep "gcr.io/google_containers/pause-amd64"|wc -l)
+    i_cnt=$((cnt))
+    if [ $i_cnt -lt 1 ] ;then
+        docker pull $IMAGE_PREFIX/pause-amd64:3.0
+        docker tag $IMAGE_PREFIX/pause-amd64:3.0 gcr.io/google_containers/pause-amd64:3.0
+    else
+        echo "gcr.io/google_containers/pause-amd64:3.0 exist"
+    fi
+}
 kube::multinode::main(){
 
   # Require root
@@ -24,7 +36,8 @@ kube::multinode::main(){
     kube::log::fatal "Please run as root"
   fi
 
-  for tool in curl ip docker; do
+  for tool in curl ip docker;
+  do
     if [[ ! -f $(which ${tool} 2>&1) ]]; then
       kube::log::fatal "The binary ${tool} is required. Install it."
     fi
@@ -35,24 +48,24 @@ kube::multinode::main(){
     kube::log::fatal "Docker is not running on this machine!"
   fi
 
-  LATEST_STABLE_K8S_VERSION=$(curl -sSL "https://storage.googleapis.com/kubernetes-release/release/stable.txt")
+  IMAGE_PREFIX="registry.cn-hangzhou.aliyuncs.com/google-containers"
+#  IMAGE_PREFIX="gcr.io/google_containers"
+#  LATEST_STABLE_K8S_VERSION=$(curl -sSL "https://storage.googleapis.com/kubernetes-release/release/stable.txt")
+  LATEST_STABLE_K8S_VERSION=v1.3.5
   K8S_VERSION=${K8S_VERSION:-${LATEST_STABLE_K8S_VERSION}}
 
-  CURRENT_PLATFORM=$(kube::helpers::host_platform)
-  ARCH=${ARCH:-${CURRENT_PLATFORM##*/}}
+  # TODO: Update to 3.0.3
+  ETCD_VERSION=${ETCD_VERSION:-"2.2.5"}
 
-  if [[ ${ARCH} == "arm" ]]; then
-    ETCD_VERSION=${ETCD_VERSION:-"2.2.5"}
-  else
-    ETCD_VERSION=${ETCD_VERSION:-"3.0.4"}
-  fi
-
-  FLANNEL_VERSION=${FLANNEL_VERSION:-"v0.6.1"}
+  FLANNEL_VERSION=${FLANNEL_VERSION:-"0.5.5"}
   FLANNEL_IPMASQ=${FLANNEL_IPMASQ:-"true"}
   FLANNEL_BACKEND=${FLANNEL_BACKEND:-"udp"}
   FLANNEL_NETWORK=${FLANNEL_NETWORK:-"10.1.0.0/16"}
 
   RESTART_POLICY=${RESTART_POLICY:-"unless-stopped"}
+
+  CURRENT_PLATFORM=$(kube::helpers::host_platform)
+  ARCH=${ARCH:-${CURRENT_PLATFORM##*/}}
 
   DEFAULT_IP_ADDRESS=$(ip -o -4 addr list $(ip -o -4 route show to default | awk '{print $5}' | head -1) | awk '{print $4}' | cut -d/ -f1 | head -1)
   IP_ADDRESS=${IP_ADDRESS:-${DEFAULT_IP_ADDRESS}}
@@ -84,6 +97,7 @@ kube::multinode::main(){
       --network-plugin=cni \
       --network-plugin-dir=/etc/cni/net.d"
   fi
+  kube::multinode::get_pause_pod
 }
 
 # Ensure everything is OK, docker is running and we're root
@@ -117,7 +131,7 @@ kube::multinode::start_etcd() {
     --restart=${RESTART_POLICY} \
     ${ETCD_NET_PARAM} \
     -v /var/lib/kubelet/etcd:/var/etcd \
-    gcr.io/google_containers/etcd-${ARCH}:${ETCD_VERSION} \
+    ${IMAGE_PREFIX}/etcd-${ARCH}:${ETCD_VERSION} \
     /usr/local/bin/etcd \
       --listen-client-urls=http://0.0.0.0:2379,http://0.0.0.0:4001 \
       --advertise-client-urls=http://localhost:2379,http://localhost:4001 \
@@ -155,7 +169,7 @@ kube::multinode::start_flannel() {
     --privileged \
     -v /dev/net:/dev/net \
     -v ${FLANNEL_SUBNET_DIR}:${FLANNEL_SUBNET_DIR} \
-    quay.io/coreos/flannel:${FLANNEL_VERSION}-${ARCH} \
+    ${IMAGE_PREFIX}/flannel-${ARCH}:${FLANNEL_VERSION} \
     /opt/bin/flanneld \
       --etcd-endpoints=http://${MASTER_IP}:2379 \
       --ip-masq="${FLANNEL_IPMASQ}" \
@@ -190,7 +204,7 @@ kube::multinode::start_k8s_master() {
     --restart=${RESTART_POLICY} \
     --name kube_kubelet_$(kube::helpers::small_sha) \
     ${KUBELET_MOUNTS} \
-    gcr.io/google_containers/hyperkube-${ARCH}:${K8S_VERSION} \
+    ${IMAGE_PREFIX}/hyperkube-${ARCH}:${K8S_VERSION} \
     /hyperkube kubelet \
       --allow-privileged \
       --api-servers=http://localhost:8080 \
@@ -216,7 +230,7 @@ kube::multinode::start_k8s_worker() {
     --restart=${RESTART_POLICY} \
     --name kube_kubelet_$(kube::helpers::small_sha) \
     ${KUBELET_MOUNTS} \
-    gcr.io/google_containers/hyperkube-${ARCH}:${K8S_VERSION} \
+    ${IMAGE_PREFIX}/hyperkube-${ARCH}:${K8S_VERSION} \
     /hyperkube kubelet \
       --allow-privileged \
       --api-servers=http://${MASTER_IP}:8080 \
@@ -236,7 +250,7 @@ kube::multinode::start_k8s_worker_proxy() {
     --privileged \
     --name kube_proxy_$(kube::helpers::small_sha) \
     --restart=${RESTART_POLICY} \
-    gcr.io/google_containers/hyperkube-${ARCH}:${K8S_VERSION} \
+    ${IMAGE_PREFIX}/hyperkube-${ARCH}:${K8S_VERSION} \
     /hyperkube proxy \
         --master=http://${MASTER_IP}:8080 \
         --v=2
@@ -258,12 +272,15 @@ kube::multinode::turndown(){
 
   kube::log::status "Killing all kubernetes containers..."
 
-  if [[ $(docker ps | grep "kube_" | awk '{print $1}' | wc -l) != 0 ]]; then
-    docker rm -f $(docker ps | grep "kube_" | awk '{print $1}')
-  fi
-  if [[ $(docker ps | grep "k8s_" | awk '{print $1}' | wc -l) != 0 ]]; then
-    docker rm -f $(docker ps | grep "k8s_" | awk '{print $1}')
-  fi
+  for c in $(docker ps | grep "k8s_" | awk '{print $1}')
+  do
+      docker rm -f $c
+  done
+
+  for c in $(docker ps | grep "kube_" | awk '{print $1}')
+  do
+      docker rm -f $c
+  done
 
   if [[ -d /var/lib/kubelet ]]; then
     read -p "Do you want to clean /var/lib/kubelet? [Y/n] " clean_kubelet_dir
@@ -276,9 +293,7 @@ kube::multinode::turndown(){
         if [[ ! -z $(mount | grep "/var/lib/kubelet" | awk '{print $3}') ]]; then
 
           # The umount command may be a little bit stubborn sometimes, so run the commands twice to ensure the mounts are gone
-          mount | grep "/var/lib/kubelet/*" | awk '{print $3}' | xargs umount 1>/dev/null 2>/dev/null
-          mount | grep "/var/lib/kubelet/*" | awk '{print $3}' | xargs umount 1>/dev/null 2>/dev/null
-          umount /var/lib/kubelet 1>/dev/null 2>/dev/null
+          df | grep "/var/lib/kubelet/*" | awk '{print $6}' | xargs umount 1>/dev/null 2>/dev/null
           umount /var/lib/kubelet 1>/dev/null 2>/dev/null
         fi
 
@@ -393,4 +408,31 @@ kube::log::fatal() {
     echo "    $message" >&2
   done
   exit 1
+}
+
+kube::helpers::create_kubeconfig()
+{
+    which kubectl
+    if [ $? -ne 0 ] ;then
+        curl -sSL https://storage.googleapis.com/kubernetes-release/release/v1.3.5/bin/linux/amd64/kubectl > /usr/local/bin/kubectl
+        chmod +x /usr/local/bin/kubectl
+    fi
+    kubectl config set-cluster default --server=http://127.0.0.1:8080 --insecure-skip-tls-verify=true
+    kubectl config set-credentials default-user --username=admin --password=secret
+    kubectl config set-context default-context --cluster=default --user=default-user
+    kubectl config use-context default-context
+    mkdir -p /var/lib/kubelet/kubeconfig && cp ~/.kube/config /var/lib/kubelet/kubeconfig/kubeconfig.yaml
+}
+
+kube::helpers::kube_usage()
+{
+    echo " Usage:"
+    echo "      kubectl get po --namespace=kube-system"
+    echo "      kubectl get svc --namespace=kube-system"
+    echo "      kubectl get svc --namespace=kube-system"
+    echo "   1.use curl http://10.0.0.6:80 or "
+    echo "   2.use ssh tunnel to expose remote node port to local :"
+    echo "      ssh -N -v -L :8888:10.0.0.6:80 root@47.90.81.195  "
+    echo "      8888 is your local port ,   root@47.90.81.195 is the remote node"
+    echo "     to reach kube-dashboard"
 }

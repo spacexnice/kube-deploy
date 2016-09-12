@@ -34,7 +34,8 @@ kube::bootstrap::bootstrap_daemon() {
 
   # Wait for docker bootstrap to start by "docker ps"-ing every second
   local SECONDS=0
-  while [[ $(docker -H ${BOOTSTRAP_DOCKER_SOCK} ps 2>&1 1>/dev/null; echo $?) != 0 ]]; do
+  while [[ $(docker -H ${BOOTSTRAP_DOCKER_SOCK} ps 2>&1 1>/dev/null; echo $?) != 0 ]];
+  do
     ((SECONDS++))
     if [[ ${SECONDS} == ${TIMEOUT_FOR_SERVICES} ]]; then
       kube::log::fatal "docker bootstrap failed to start. Exiting..."
@@ -56,7 +57,7 @@ kube::bootstrap::restart_docker(){
 
     # Is there an uncommented OPTIONS line at all?
     if [[ -z $(grep "OPTIONS" ${DOCKER_CONF} | grep -v "#") ]]; then
-      echo "OPTIONS=\"--mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET} \"" >> ${DOCKER_CONF}
+      echo "OPTIONS=\"--mtu=${FLANNEL_MTU} --bip=${FLANNEL_SUBNET}  \"" >> ${DOCKER_CONF}
     else
       kube::helpers::replace_mtu_bip ${DOCKER_CONF} "OPTIONS"
     fi
